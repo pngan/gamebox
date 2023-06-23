@@ -1,0 +1,46 @@
+﻿@page "/"
+@page "/{ErrorMessage}"
+
+@inject NavigationManager NavigationManager
+@inject HttpClient Http
+
+<PageTitle>Index</PageTitle>
+
+
+<h1>Choose Your Game</h1>
+<div class="button-box">
+    <div class="grid-container">
+        <input class="grid-item"  type="text" @bind="@GameCode" placeholder="Optional Game Code"  />
+        <button class="grid-item" @onclick="GotoPlanningPoker">Planning Poker</button>
+        <button class="grid-item" @onclick="GotoFetchData">Count Down</button>
+        <button class="grid-item" @onclick="GotoCounter">Up and Down</button>
+        <button class="grid-item" @onclick="GotoWouldYouRather">Guess Who</button>
+        <input  class="grid-item no-border" @bind="@ErrorMessage" readonly />
+    </div>
+</div>
+<label for="fname">Version: </label>
+<input class="no-border" @bind="@GitHash" readonly />
+@code {
+
+    public string GitHash { get; set; } = string.Empty;
+    public string GameCode { get; set; } = string.Empty;
+
+    [Parameter] public string ErrorMessage { get; set; } = string.Empty;
+
+
+
+    private void GotoFetchData() => NavigationManager.NavigateTo("planningpoker/jkhg");
+    private void GotoCounter() => NavigationManager.NavigateTo("counter"); 
+    private void GotoWouldYouRather() => NavigationManager.NavigateTo("wouldyourather");
+    private void GotoPlanningPoker()
+    {
+        if (string.IsNullOrWhiteSpace(GameCode))
+            NavigationManager.NavigateTo($"planningpoker/signup");
+        else
+            NavigationManager.NavigateTo($"planningpoker/signup/{GameCode}");
+    }
+    protected override async Task OnInitializedAsync()
+    {
+        GitHash = await Http.GetStringAsync("GitHash");
+    }
+}

@@ -1,0 +1,169 @@
+﻿@page "/planningpoker"
+@page "/planningpoker/{Gamecode}"
+
+
+@using System.Text.RegularExpressions;
+@using Microsoft.AspNetCore.SignalR.Client;
+@using gamebox.Client.Models;
+@using System.Text.Json;
+
+@inject NavigationManager NavigationManager
+@inject Blazored.SessionStorage.ISessionStorageService SessionStorage
+@inject HttpClient Http
+@inject IJSRuntime JSRuntime
+
+@implements IAsyncDisposable
+
+<PageTitle>Planning Poker!</PageTitle>
+<style>
+    
+
+div.page-banner
+{
+    color: rebeccapurple;
+    font-family:'Trebuchet MS', 'Lucida Sans Unicode', 'Lucida Grande', 'Lucida Sans', Arial, sans-serif;
+    font-size: 40pt;
+}
+
+div.planning-poker-container {
+    background: #CCCCCC;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    justify-content: space-between;
+    row-gap: 20px;
+}
+
+label.game-code {
+    color: lightgoldenrodyellow;
+    font-size: 40pt;
+    font-family: Courier New, Courier, monospace;
+    font-weight:bolder;
+}
+
+</style>
+
+
+<div class="planning-poker-container">
+
+<div class="page-banner">
+    Planning Poker!
+</div>
+<div class="form-group">
+
+    <label>Game Code: </label>
+    <label class="game-code">@(_gameCode)</label>
+</div>
+<ul>
+    @foreach (var player in Players)
+    {
+        <li>@player</li>
+    }
+</ul>
+
+
+</div>
+
+@code {
+    private HubConnection? hubConnection;
+    private string? _gameCode;
+    private List<string> Players = new();
+
+    [Parameter]
+    public string? Gamecode
+    {
+        get => _gameCode;
+        set => _gameCode = value?.ToUpper();
+    }
+    const string PLAYER_NAME_STORAGE_KEY = "gamebox.playername";
+    const string PLAYER_TYPE_STORAGE_KEY = "gamebox.playertype";
+    enum PlayerType {PLAYER, SPECTATOR};
+
+    private string _playerName = "";
+    private string PlayerName { 
+        get => _playerName;
+        set
+        {
+            _playerName = value;
+        }
+    }
+
+    private async Task RefreshGameInfoAsync()
+    {
+        PokerPlanningGameInfo? gameInfo = null;
+        try
+        {
+            gameInfo = await Http.GetFromJsonAsync<PokerPlanningGameInfo>($"GameCoordinator/{Gamecode}");
+        }
+        catch { }
+
+        Players.Clear();
+
+        foreach (var player in gameInfo.Players)
+            Players.Add(player);
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        PokerPlanningGameInfo? gameInfo = null;
+        try
+        {
+            gameInfo = await Http.GetFromJsonAsync<PokerPlanningGameInfo>($"GameCoordinator/{Gamecode}");
+        }
+        catch { }
+
+        Players = gameInfo.Players;
+    }
+
+
+    protected override async Task OnInitializedAsync()
+    {
+        hubConnection = new HubConnectionBuilder()
+            .WithUrl(NavigationManager.ToAbsoluteUri("/planningpokerhub"))
+            .Build();
+
+
+        hubConnection.On<string, string>("ReceiveGameInfo", async (gameCode, userName) =>
+        {
+            await RefreshGameInfoAsync();
+            StateHasChanged();
+        });
+        //hubConnection.On<string, string>("ReceiveMessage", (user, message) =>
+        //{
+        //    var encodedMsg = $"{user}: {message}";
+        //    messages.Add(encodedMsg);
+        //    StateHasChanged();
+        //});
+
+
+        await hubConnection.StartAsync();
+    }
+
+    private async Task SendGameInfoAsync()
+    {
+        if (hubConnection is not null)
+        {
+            await hubConnection.SendAsync("BroadcastGameInfo", _gameCode, PlayerName);
+        }
+    }
+
+    public bool IsConnected => hubConnection?.State == HubConnectionState.Connected;    
+
+    public async ValueTask DisposeAsync()
+    {
+        if (hubConnection is not null)
+        {
+            await hubConnection.DisposeAsync();
+        }
+    }
+
+
+    private async Task Send()
+    {
+        if (hubConnection is not null)
+        {
+            await hubConnection.SendAsync("SendMessage", PlayerName, hubConnection.ConnectionId);
+        }
+    }
+}

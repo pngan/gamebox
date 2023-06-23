@@ -1,0 +1,262 @@
+﻿@page "/planningpoker/signup"
+@page "/planningpoker/signup/{Gamecode}"
+
+@using Microsoft.AspNetCore.SignalR.Client;
+@using System.Text.RegularExpressions;
+@using gamebox.Client.Models;
+@using System.Text.Json;
+
+@inject NavigationManager NavigationManager
+@inject Blazored.SessionStorage.ISessionStorageService SessionStorage
+@inject HttpClient Http
+@inject IJSRuntime JSRuntime
+
+@implements IAsyncDisposable
+
+<PageTitle>Planning Poker!</PageTitle>
+<style>
+    
+
+div.page-banner
+{
+    color: rebeccapurple;
+    font-family:'Trebuchet MS', 'Lucida Sans Unicode', 'Lucida Grande', 'Lucida Sans', Arial, sans-serif;
+    font-size: 40pt;
+}
+
+div.planning-poker-container {
+    background: #CCCCCC;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    justify-content: space-between;
+    row-gap: 20px;
+}
+
+label.game-code {
+    color: lightgoldenrodyellow;
+    font-size: 40pt;
+    font-family: Courier New, Courier, monospace;
+    font-weight:bolder;
+}
+
+</style>
+
+
+<div class="planning-poker-container">
+
+<div class="page-banner">
+    Welcome to Planning Poker
+</div>
+<div class="form-group">
+
+    <label>Game Code: </label>
+    <label class="game-code">@(_gameCode)</label>
+</div>
+<div class="form-group">
+    <label>
+        What is your Name?
+        <input @bind="PlayerName" @bind:event="oninput" />
+    </label>
+    @if (!IsNameUnique)
+    {
+        <div>
+            <label>A player with that name already exists. Choose a different name.</label>
+        </div>
+    }
+</div>
+<ul id="messagesList">
+    @foreach (var message in messages)
+    {
+        <li>@message</li>
+    }
+</ul>
+
+<div class="button-box">
+    <div class="grid-container">
+        <button class="grid-item" @onclick="GotoJoinAsPlayer" disabled="@IsJoinDisabled">Join As Player</button>
+        <button class="grid-item" @onclick="GotoJoinAsSpectator" disabled="@IsJoinDisabled">Join As Spectator</button>
+        <button class="grid-item" @onclick="GotoJoinGame" disabled="@IsJoinDisabled">Join Game</button>
+        <button class="grid-item" @onclick="GotoSendMessage" disabled="@IsJoinDisabled">Send</button>
+        <button class="grid-item" @onclick="GotoSendGameInfo" disabled="@IsJoinDisabled">Send</button>
+    </div>
+</div>
+</div>
+
+@code {
+    private HubConnection? hubConnection;
+
+    private string? _gameCode;
+    const int MAX_PLAYERS = 5;
+    private string errorGameCodeWrongFormat  = "Use 1 letter game code.";
+    private string errorGameCodeDoesNotExist =  "Game does not exist.";
+    private string errorGameIsFull =  "Sorry, game is full";
+    protected bool IsJoinDisabled {
+        get => string.IsNullOrWhiteSpace(PlayerName);
+    }
+
+    private List<string> messages = new List<string>();
+    [Parameter]
+    public string? Gamecode
+    {
+        get => _gameCode;
+        set => _gameCode = value?.ToUpper();
+    }
+
+    private bool IsNameUnique
+    {
+        get;
+        set;
+    } = true;
+
+
+    const string PLAYER_NAME_STORAGE_KEY = "gamebox.playername";
+    const string PLAYER_TYPE_STORAGE_KEY = "gamebox.playertype";
+    enum PlayerType {PLAYER, SPECTATOR};
+
+    private string _playerName = "";
+    private string PlayerName { 
+        get => _playerName;
+        set
+        {
+            _playerName = value;
+
+            IsNameUnique = true;
+        }
+    }
+
+    private async Task GotoJoinAsPlayer() => await JoinGame(PlayerType.PLAYER);
+    private async Task GotoJoinAsSpectator() => await JoinGame(PlayerType.SPECTATOR);
+    private async Task GotoSendMessage() => await Send();
+    private async Task GotoSendGameInfo() => await SendGameInfoAsync();
+    private async Task GotoJoinGame()
+    {
+        if (hubConnection is not null)
+        {
+            await hubConnection.SendAsync("JoinGame", _gameCode, _gameCode);
+        }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (string.IsNullOrWhiteSpace(Gamecode))
+        {
+            Gamecode = await Http.GetStringAsync("GameCoordinator/gamecode");
+            NavigationManager.NavigateTo($"planningpoker/signup/{_gameCode}");
+        }
+        else
+        {
+            if (!Regex.IsMatch(Gamecode!, "[A-Z]{1}"))
+            {
+                NavigationManager.NavigateTo( Uri.EscapeDataString($"{errorGameCodeWrongFormat}"));
+            }
+        }
+    }
+
+    private async Task JoinGame(PlayerType playerType)
+    {
+        PokerPlanningGameInfo? gameInfo = null;
+        try
+        {
+            gameInfo = await Http.GetFromJsonAsync<PokerPlanningGameInfo>($"GameCoordinator/{Gamecode}");
+        }
+        catch { }
+
+        if (gameInfo == null)
+            gameInfo = new PokerPlanningGameInfo();
+
+        // If current Player is different from the previous player in session, remove old player
+        // and replace with new player
+        var previousPlayer = await SessionStorage.GetItemAsStringAsync(PLAYER_NAME_STORAGE_KEY);
+        if (string.Compare(previousPlayer, PlayerName, StringComparison.InvariantCultureIgnoreCase) != 0)
+        {
+            gameInfo.Players.Remove(previousPlayer);
+            gameInfo.Spectators.Remove(previousPlayer);
+            await SessionStorage.SetItemAsync(PLAYER_NAME_STORAGE_KEY, PlayerName);
+        }
+
+        // Return with error if game is full
+        if (playerType == PlayerType.PLAYER && gameInfo.Players.Count >= MAX_PLAYERS)
+        {
+            NavigationManager.NavigateTo(Uri.EscapeDataString($"{errorGameIsFull}"));
+        }
+
+        // Add Player or Spectator, only if they haven't been added previously
+        if (   gameInfo.Players.All(   p => string.Compare(p, PlayerName, StringComparison.InvariantCultureIgnoreCase) != 0)
+            && gameInfo.Spectators.All(p => string.Compare(p, PlayerName, StringComparison.InvariantCultureIgnoreCase) != 0))
+        {
+            if (playerType == PlayerType.PLAYER)
+            {
+                gameInfo.Players.Add(PlayerName);
+            }
+            else
+            {
+                gameInfo.Spectators.Add(PlayerName);
+            }
+            try
+            {
+                string json = System.Text.Json.JsonSerializer.Serialize(gameInfo);
+                var content = new StringContent(json, System.Text.Encoding.UTF8, "text/plain");
+                await Http.PostAsync($"GameCoordinator/{Gamecode}", content);
+                await SendGameInfoAsync();
+            }
+            catch (Exception ex)
+            {
+
+            }
+        }
+        NavigationManager.NavigateTo($"planningpoker/setup/{_gameCode}");
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        hubConnection = new HubConnectionBuilder()
+            .WithUrl(NavigationManager.ToAbsoluteUri("/planningpokerhub"))
+            .Build();
+
+
+        hubConnection.On<string, string>("ReceiveMessage", (user, message) =>
+        {
+            var encodedMsg = $"{user}: {message}";
+            messages.Add(encodedMsg);
+            StateHasChanged();
+        });
+
+        hubConnection.On<string, string>("ReceiveGameInfo", (gameCode, userName) =>
+        {
+            var encodedMsg = $"{gameCode}: {userName}";
+            messages.Add(encodedMsg);
+            StateHasChanged();
+        });
+
+        await hubConnection.StartAsync();
+    }
+
+    private async Task SendGameInfoAsync()
+    {
+        if (hubConnection is not null)
+        {
+            await hubConnection.SendAsync("BroadcastGameInfo", _gameCode, PlayerName);
+        }
+    }
+
+    public bool IsConnected => hubConnection?.State == HubConnectionState.Connected;    
+
+    public async ValueTask DisposeAsync()
+    {
+        if (hubConnection is not null)
+        {
+            await hubConnection.DisposeAsync();
+        }
+    }
+
+
+    private async Task Send()
+    {
+        if (hubConnection is not null)
+        {
+            await hubConnection.SendAsync("SendMessage", PlayerName, hubConnection.ConnectionId);
+        }
+    }
+}
