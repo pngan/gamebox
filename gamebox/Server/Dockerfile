@@ -16,7 +16,7 @@ COPY ["gamebox/Server/gamebox.Server.csproj", "Server/"]
 COPY ["gamebox/Client/gamebox.Client.csproj", "Client/"]
 COPY ["gamebox/Shared/gamebox.Shared.csproj", "Shared/"]
 RUN dotnet restore "Server/gamebox.Server.csproj"
-COPY . .
+COPY gamebox .
 WORKDIR "/src/Server"
 RUN dotnet build "gamebox.Server.csproj" -c Release -o /app/build
 
