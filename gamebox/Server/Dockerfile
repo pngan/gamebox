@@ -14,7 +14,7 @@ FROM mcr.microsoft.com/dotnet/sdk:7.0 AS build
 WORKDIR /src
 COPY ["gamebox/Server/gamebox.Server.csproj", "Server/"]
 COPY ["gamebox/Client/gamebox.Client.csproj", "Client/"]
-#COPY ["Shared/gamebox.Shared.csproj", "Shared/"]
+COPY ["gamebox/Shared/gamebox.Shared.csproj", "Shared/"]
 RUN dotnet restore "Server/gamebox.Server.csproj"
 COPY . .
 WORKDIR "/src/Server"
